@@ -1,0 +1,5 @@
+{
+  "name": "JSONL Log Analyzer",
+  "description": "An application to upload a JSONL log file, process it, and extract and display specific log messages from the 'sender'.",
+  "requestFramePermissions": []
+}
