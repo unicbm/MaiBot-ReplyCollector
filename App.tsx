@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 
 // Define the type for a single log entry for type safety
 interface LogEntry {
@@ -14,6 +14,7 @@ interface SenderMessage {
     timestamp: string;
 }
 
+// Icon Components
 const UploadIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg className={className} stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -37,12 +38,40 @@ const DownloadIcon: React.FC<{ className?: string }> = ({ className }) => (
     </svg>
 );
 
+const ClipboardIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
+        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+        <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+    </svg>
+);
+
+const CloseIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg className={className} stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+    </svg>
+);
 
 const App: React.FC = () => {
   const [files, setFiles] = useState<File[]>([]);
   const [senderMessages, setSenderMessages] = useState<SenderMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // State for export functionality
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [exportFormat, setExportFormat] = useState<'md' | 'txt'>('md');
+  const [exportStyle, setExportStyle] = useState<'timeline' | 'plaintext'>('timeline');
+  const [previewContent, setPreviewContent] = useState<string>('');
+  const [isCopied, setIsCopied] = useState<boolean>(false);
+
+  useEffect(() => {
+    // When format is md, style must be timeline
+    if (exportFormat === 'md') {
+      setExportStyle('timeline');
+    }
+  }, [exportFormat]);
+
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = event.target.files ? Array.from(event.target.files) : [];
@@ -58,12 +87,11 @@ const App: React.FC = () => {
         if (validFiles.length > 0) {
             setFiles(validFiles);
             setSenderMessages([]);
-        } else if (selectedFiles.length > 0) { // If user selected files but none were valid
+        } else if (selectedFiles.length > 0) {
              setError("请上传一个有效的 .jsonl 文件。");
              setFiles([]);
         }
     }
-    // Reset file input value to allow re-uploading the same file
     event.target.value = '';
   };
 
@@ -95,7 +123,7 @@ const App: React.FC = () => {
         contents.forEach(content => {
              if (!content) return;
              const lines = content.split('\n');
-             lines.forEach((line, index) => {
+             lines.forEach((line) => {
                 if (line.trim() === '') return;
                 try {
                     const log: LogEntry = JSON.parse(line);
@@ -111,9 +139,7 @@ const App: React.FC = () => {
             });
         });
         
-        // Sort all messages by timestamp chronologically
         allExtractedMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
         setSenderMessages(allExtractedMessages);
 
     } catch (err) {
@@ -123,27 +149,51 @@ const App: React.FC = () => {
     }
   }, [files]);
   
-  const handleExportMarkdown = () => {
+  const generatePreviewContent = () => {
     if (senderMessages.length === 0) return;
     
     const fileNames = files.map(f => f.name).join(', ');
-
-    let markdownContent = "# Sender 消息时间线\n\n";
-    markdownContent += `> 从文件 **${fileNames}** 中提取的消息记录。\n\n`;
-    markdownContent += "---\n\n";
-
-    senderMessages.forEach(item => {
-        markdownContent += `### ${item.timestamp}\n\n`;
-        markdownContent += `${item.message.replace(/\n/g, '\n\n')}\n\n`;
-        markdownContent += "---\n\n";
+    let content = "";
+    
+    if (exportStyle === 'plaintext') { // Only for TXT
+        content = senderMessages.map(item => item.message).join('\n');
+    } else { // Timeline style
+        if (exportFormat === 'md') {
+            content += `# Sender 消息时间线\n\n`;
+            content += `> 从文件 **${fileNames}** 中提取的消息记录。\n\n`;
+            content += "---\n\n";
+            senderMessages.forEach(item => {
+                content += `### ${item.timestamp}\n\n`;
+                content += `${item.message.replace(/\n/g, '\n\n')}\n\n`;
+                content += "---\n\n";
+            });
+        } else { // TXT timeline
+            content += `Sender 消息时间线\n`;
+            content += `从文件 ${fileNames} 中提取的消息记录。\n\n`;
+            senderMessages.forEach(item => {
+                content += `[${item.timestamp}]\n${item.message}\n\n`;
+            });
+        }
+    }
+    setPreviewContent(content);
+    setShowExportModal(true);
+  };
+  
+  const handleCopyToClipboard = () => {
+    navigator.clipboard.writeText(previewContent).then(() => {
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
     });
+  };
 
-    const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+  const handleDownloadFile = () => {
+    const mimeType = exportFormat === 'md' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8';
+    const blob = new Blob([previewContent], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     const exportTimestamp = new Date().toISOString().slice(0, 19).replace(/[-T:]/g, '');
-    link.download = `sender-logs-batch-${exportTimestamp}.md`;
+    link.download = `sender-logs-batch-${exportTimestamp}.${exportFormat}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -159,7 +209,7 @@ const App: React.FC = () => {
           <header className="text-center">
             <h1 className="text-4xl font-bold text-gray-900 dark:text-white">JSONL 日志分析器</h1>
             <p className="text-lg text-gray-600 dark:text-gray-400 mt-2">
-              上传一个或多个日志文件以提取 Sender 的回复内容
+              上传一个或多个麦麦的日志文件以提取 Sender 的回复内容
             </p>
           </header>
 
@@ -199,28 +249,48 @@ const App: React.FC = () => {
           {error && <div className="bg-red-100 dark:bg-red-900/50 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-200 px-4 py-3 rounded-lg text-center" role="alert">{error}</div>}
 
           {senderMessages.length > 0 && (
-            <div className="space-y-4 pt-6">
-              <div className="flex justify-between items-center border-b-2 border-gray-200 dark:border-gray-600 pb-2 mb-2">
-                <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">
-                    提取的消息 ({senderMessages.length}条)
-                </h2>
-                <button
-                    onClick={handleExportMarkdown}
-                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-transform transform active:scale-95 duration-150"
-                    aria-label="导出为Markdown"
-                >
-                    <DownloadIcon className="w-5 h-5" />
-                    <span>导出Markdown</span>
-                </button>
-              </div>
-              <div className="max-h-96 overflow-y-auto pr-2 space-y-3">
-                {senderMessages.map((item, index) => (
-                  <div key={index} className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg shadow-sm">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-mono">{item.timestamp}</p>
-                    <p className="text-gray-800 dark:text-gray-200 break-words whitespace-pre-wrap">{item.message}</p>
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-6 pt-6">
+                <div className="border-b-2 border-gray-200 dark:border-gray-600 pb-2 mb-2">
+                    <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">
+                        提取的消息 ({senderMessages.length}条)
+                    </h2>
+                </div>
+              
+                <div className="max-h-96 overflow-y-auto pr-2 space-y-3">
+                    {senderMessages.map((item, index) => (
+                    <div key={index} className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg shadow-sm">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-mono">{item.timestamp}</p>
+                        <p className="text-gray-800 dark:text-gray-200 break-words whitespace-pre-wrap">{item.message}</p>
+                    </div>
+                    ))}
+                </div>
+
+                {/* Export Options */}
+                <div className="pt-4 space-y-4 bg-gray-50 dark:bg-gray-700/50 p-6 rounded-lg">
+                    <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-100">导出选项</h3>
+                    <div className="flex flex-col sm:flex-row gap-4 sm:gap-8">
+                         <div className="space-y-2">
+                            <label className="font-medium text-gray-700 dark:text-gray-300">导出格式</label>
+                            <div className="flex gap-4">
+                                <button onClick={() => setExportFormat('md')} className={`px-4 py-2 rounded-md transition-colors ${exportFormat === 'md' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500'}`}>Markdown</button>
+                                <button onClick={() => setExportFormat('txt')} className={`px-4 py-2 rounded-md transition-colors ${exportFormat === 'txt' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500'}`}>TXT</button>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="font-medium text-gray-700 dark:text-gray-300">导出风格</label>
+                            <div className="flex gap-4">
+                                <button onClick={() => setExportStyle('timeline')} className={`px-4 py-2 rounded-md transition-colors ${exportStyle === 'timeline' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500'}`}>时间线</button>
+                                <button onClick={() => setExportStyle('plaintext')} disabled={exportFormat === 'md'} className={`px-4 py-2 rounded-md transition-colors ${exportStyle === 'plaintext' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed`}>纯文本</button>
+                            </div>
+                        </div>
+                    </div>
+                     <button
+                        onClick={generatePreviewContent}
+                        className="w-full sm:w-auto text-white bg-green-600 hover:bg-green-700 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-md px-5 py-2.5 text-center transition-transform transform active:scale-95 duration-150"
+                    >
+                        生成预览与导出
+                    </button>
+                </div>
             </div>
           )}
           { !isProcessing && files.length > 0 && senderMessages.length === 0 &&
@@ -228,8 +298,51 @@ const App: React.FC = () => {
                  <p>处理完成，在所选文件中未找到 "sender" 的消息。</p>
              </div>
           }
+          
+          <footer className="text-center text-xs text-gray-500 dark:text-gray-400 pt-4 border-t border-gray-200 dark:border-gray-700">
+             <p>作者:un1 powered by Gemini</p>
+             <p className="mt-1">本站完全开源，不会浏览或分发您的任何数据，请放心使用。</p>
+          </footer>
         </div>
       </div>
+      
+      {/* Export Preview Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                <header className="flex justify-between items-center p-4 border-b dark:border-gray-600">
+                    <h2 id="export-modal-title" className="text-xl font-semibold text-gray-900 dark:text-white">导出预览</h2>
+                    <button onClick={() => setShowExportModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" aria-label="关闭">
+                       <CloseIcon className="w-6 h-6" />
+                    </button>
+                </header>
+                <main className="p-4 flex-grow overflow-y-auto">
+                    <textarea 
+                        readOnly 
+                        value={previewContent}
+                        className="w-full h-full min-h-[40vh] p-3 font-mono text-sm bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                        aria-label="导出内容预览"
+                    ></textarea>
+                </main>
+                <footer className="flex flex-col sm:flex-row justify-end items-center gap-3 p-4 border-t dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50">
+                    <button 
+                        onClick={handleCopyToClipboard}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded-lg transition-all duration-150"
+                    >
+                       <ClipboardIcon className="w-5 h-5" />
+                       <span>{isCopied ? '已复制!' : '复制内容'}</span>
+                    </button>
+                    <button 
+                        onClick={handleDownloadFile}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-all duration-150"
+                    >
+                        <DownloadIcon className="w-5 h-5" />
+                        <span>下载文件</span>
+                    </button>
+                </footer>
+            </div>
+        </div>
+      )}
     </div>
   );
 };
