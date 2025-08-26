@@ -1,5 +1,5 @@
 {
-  "name": "JSONL Log Analyzer",
-  "description": "An application to upload a JSONL log file, process it, and extract and display specific log messages from the 'sender'.",
+  "name": "通用日志检索与解析器",
+  "description": "一个通用的日志文件分析工具。支持关键字检索，或使用正则表达式解析日志结构，并自定义导出格式。",
   "requestFramePermissions": []
 }

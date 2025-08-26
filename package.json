@@ -1,5 +1,5 @@
 {
-  "name": "jsonl-log-analyzer",
+  "name": "通用日志检索与解析器",
   "private": true,
   "version": "0.0.0",
   "type": "module",
