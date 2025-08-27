@@ -1,10 +1,12 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 
 // Define the types for our processed log lines for type safety
 interface SimpleMatch {
   type: 'simple';
   content: string;
   fileName: string;
+  lineIndex: number;
+  fileIndex: number;
 }
 
 interface ParsedMatch {
@@ -12,6 +14,8 @@ interface ParsedMatch {
   groups: { [key: string]: string };
   fileName: string;
   rawContent: string;
+  lineIndex: number;
+  fileIndex: number;
 }
 
 type ProcessedLine = SimpleMatch | ParsedMatch;
@@ -78,6 +82,20 @@ const App: React.FC = () => {
   const [exportConfig, setExportConfig] = useState<ExportConfig | null>(null);
   const [isCopied, setIsCopied] = useState<boolean>(false);
 
+  // State for context viewer
+  const [allFileContents, setAllFileContents] = useState<{ name: string; lines: string[] }[]>([]);
+  const [selectedLineForContext, setSelectedLineForContext] = useState<ProcessedLine | null>(null);
+  const highlightedLineRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (highlightedLineRef.current) {
+      highlightedLineRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }
+  }, [selectedLineForContext]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = event.target.files ? Array.from(event.target.files) : [];
     if (selectedFiles.length > 0) {
@@ -93,6 +111,8 @@ const App: React.FC = () => {
             setFiles(validFiles);
             setProcessedLines([]);
             setLastSearchCompleted(false);
+            setSelectedLineForContext(null); // Reset context view
+            setAllFileContents([]); // Reset file contents
         } else if (selectedFiles.length > 0) {
              setError("请上传有效的 .jsonl, .txt, 或 .log 文件。");
              setFiles([]);
@@ -116,6 +136,7 @@ const App: React.FC = () => {
     setRegexError(null);
     setProcessedLines([]);
     setLastSearchCompleted(false);
+    setSelectedLineForContext(null);
 
     let regex: RegExp | null = null;
     if (isAdvancedMode) {
@@ -125,7 +146,6 @@ const App: React.FC = () => {
             return;
         }
         try {
-            // Basic validation for named capture groups
             if (!/\(\?<.*?>/.test(parsingRegex)) {
                 throw new Error("正则表达式必须包含至少一个命名捕获组, e.g., (?<name>...).");
             }
@@ -148,13 +168,16 @@ const App: React.FC = () => {
         });
 
         const contents = await Promise.all(fileReadPromises);
+        const allContentsForState = contents.map((content, index) => ({
+            name: files[index].name,
+            lines: content.split('\n'),
+        }));
+        setAllFileContents(allContentsForState);
         
         const allProcessedLines: ProcessedLine[] = [];
 
-        contents.forEach((content, fileIndex) => {
-             if (!content) return;
-             const lines = content.split('\n');
-             lines.forEach((line) => {
+        allContentsForState.forEach((fileContent, fileIndex) => {
+             fileContent.lines.forEach((line, lineIndex) => {
                 if (regex) { // Advanced Mode
                     const match = line.match(regex);
                     if (match && match.groups && line.includes(keyword)) {
@@ -163,6 +186,8 @@ const App: React.FC = () => {
                             groups: match.groups,
                             fileName: files[fileIndex].name,
                             rawContent: line,
+                            lineIndex,
+                            fileIndex,
                         });
                     }
                 } else { // Simple Mode
@@ -170,7 +195,9 @@ const App: React.FC = () => {
                         allProcessedLines.push({
                             type: 'simple',
                             content: line,
-                            fileName: files[fileIndex].name
+                            fileName: files[fileIndex].name,
+                            lineIndex,
+                            fileIndex,
                         });
                     }
                 }
@@ -203,7 +230,6 @@ const App: React.FC = () => {
         
         initialConfig = { elements, template, format: 'md' };
     } else {
-        // Simple mode config
         initialConfig = { elements: {}, template: '', format: 'md' };
     }
     
@@ -221,22 +247,18 @@ const App: React.FC = () => {
         if (item.type === 'simple') {
             return item.content;
         }
-        // Parsed item
         let lineContent = exportConfig.template;
         for (const [key, value] of Object.entries(item.groups)) {
             if (exportConfig.elements[key]) {
-                // FIX: Replaced `replaceAll` with `split/join` for wider JS environment compatibility.
                 lineContent = lineContent.split(`{${key}}`).join(value || '');
             }
         }
-         // Clean up placeholders for disabled elements
         for (const key of Object.keys(exportConfig.elements)) {
             if (!exportConfig.elements[key]) {
-                // FIX: Replaced `replaceAll` with `split/join` for wider JS environment compatibility.
                 lineContent = lineContent.split(`{${key}}`).join('');
             }
         }
-        return lineContent.replace(/\s\s+/g, ' ').trim(); // Clean up extra spaces
+        return lineContent.replace(/\s\s+/g, ' ').trim();
     }).join('\n');
 
     if (exportConfig.format === 'md') {
@@ -246,7 +268,7 @@ const App: React.FC = () => {
         content += `> 从文件 **${fileNames}** 中提取的记录。\n\n`;
         content += "---\n\n";
         content += "```\n" + body + "\n```\n";
-    } else { // TXT 
+    } else { 
         content += `日志检索结果\n`;
         content += `关键字: ${keyword}\n`;
         if (isAdvancedMode) content += `解析规则: ${parsingRegex}\n`;
@@ -282,8 +304,8 @@ const App: React.FC = () => {
 
 
   return (
-    <div className="min-h-screen text-gray-800 dark:text-gray-200 flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl mx-auto">
+    <div className="min-h-screen text-gray-800 dark:text-gray-200 flex flex-col items-center justify-center p-4">
+      <div className="w-full max-w-4xl mx-auto">
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 space-y-8">
           
           <header className="text-center">
@@ -329,7 +351,6 @@ const App: React.FC = () => {
                  />
             </div>
             
-            {/* Advanced Parsing Section */}
             <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-lg space-y-4">
                  <div className="flex items-center">
                     <input id="advanced-mode-toggle" type="checkbox" checked={isAdvancedMode} onChange={() => setIsAdvancedMode(!isAdvancedMode)} className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600" />
@@ -360,131 +381,204 @@ const App: React.FC = () => {
             </button>
           </div>
           
-          {error && <div className="bg-red-100 dark:bg-red-900/50 border border-red-400 dark:border-red-600 text-red-700 dark:text-red-200 px-4 py-3 rounded-lg text-center" role="alert">{error}</div>}
-
-          {lastSearchCompleted && processedLines.length > 0 && (
-            <div className="space-y-6 pt-6">
-                <div className="border-b-2 border-gray-200 dark:border-gray-600 pb-2 mb-2 flex justify-between items-center">
-                    <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">
-                        提取的记录 ({processedLines.length}条)
+          {error && <div className="bg-red-100 dark:bg-red-900/50 border border-red-200 dark:border-red-700 text-red-800 dark:text-red-200 px-4 py-3 rounded-lg" role="alert">{error}</div>}
+          
+          {lastSearchCompleted && (
+            <div className="mt-8">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                        检索结果
+                        <span className="text-base font-normal text-gray-500 dark:text-gray-400 ml-2">
+                            ({processedLines.length} 条)
+                        </span>
                     </h2>
-                    <button
-                        onClick={generatePreviewAndShowModal}
-                        className="text-white bg-green-600 hover:bg-green-700 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-transform transform active:scale-95 duration-150"
-                    >
-                        导出选项
+                    {processedLines.length > 0 && (
+                        <button
+                            onClick={generatePreviewAndShowModal}
+                            className="flex items-center text-white bg-green-600 hover:bg-green-700 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2"
+                        >
+                            <DownloadIcon className="w-4 h-4 mr-2" />
+                            导出
+                        </button>
+                    )}
+                </div>
+
+                {processedLines.length > 0 ? (
+                    <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg max-h-[400px] overflow-y-auto p-4 space-y-2">
+                        {processedLines.map((line, index) => (
+                            <div
+                                key={index}
+                                onClick={() => setSelectedLineForContext(line)}
+                                className={`p-3 rounded-md cursor-pointer transition-colors duration-200 ${selectedLineForContext === line ? 'bg-blue-100 dark:bg-blue-900/50 ring-1 ring-blue-500' : 'hover:bg-gray-200 dark:hover:bg-gray-700/50'}`}
+                            >
+                                {line.type === 'simple' ? (
+                                    <p className="font-mono text-sm whitespace-pre-wrap break-words">
+                                        <span className="text-gray-400 mr-2 select-none">{line.fileName}:{line.lineIndex + 1}</span>
+                                        {line.content}
+                                    </p>
+                                ) : (
+                                    <div className="font-mono text-sm space-y-1">
+                                        <p className="text-gray-400 text-xs select-none">{line.fileName}:{line.lineIndex + 1}</p>
+                                        {Object.entries(line.groups).map(([key, value]) => (
+                                            <div key={key}>
+                                                <span className="font-semibold text-blue-500 dark:text-blue-400">{key}: </span>
+                                                <span className="whitespace-pre-wrap break-words">{value}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-center py-10 bg-gray-50 dark:bg-gray-900/50 rounded-lg">
+                        <p className="text-gray-500 dark:text-gray-400">没有找到匹配的日志条目。</p>
+                    </div>
+                )}
+            </div>
+        )}
+
+        {/* Context Viewer */}
+        {selectedLineForContext && allFileContents[selectedLineForContext.fileIndex] && (
+            <div className="mt-8">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                        日志上下文: <span className="font-mono text-base bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">{allFileContents[selectedLineForContext.fileIndex].name}</span>
+                    </h3>
+                    <button onClick={() => setSelectedLineForContext(null)} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600">
+                        <CloseIcon className="w-6 h-6" />
                     </button>
                 </div>
-              
-                <div className="max-h-96 overflow-y-auto pr-2 space-y-3">
-                    {processedLines.map((item, index) => (
-                    <div key={index} className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg shadow-sm font-mono text-sm">
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{item.fileName}</p>
-                        {item.type === 'simple' ? (
-                             <p className="text-gray-800 dark:text-gray-200 break-words whitespace-pre-wrap">{item.content}</p>
-                        ) : (
-                            <div className="space-y-1">
-                                {Object.entries(item.groups).map(([key, value]) => (
-                                    <div key={key} className="flex">
-                                        <span className="text-blue-500 dark:text-blue-400 font-semibold w-24 flex-shrink-0">{key}:</span>
-                                        <span className="text-gray-800 dark:text-gray-200 break-all">{value}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                <div className="bg-gray-900 text-gray-200 font-mono text-sm rounded-lg max-h-[400px] overflow-y-auto p-4">
+                    {allFileContents[selectedLineForContext.fileIndex].lines.map((content, index) => (
+                        <div
+                            key={index}
+                            ref={index === selectedLineForContext.lineIndex ? highlightedLineRef : null}
+                            className={`whitespace-pre-wrap break-words -mx-4 px-4 ${index === selectedLineForContext.lineIndex ? 'bg-blue-900/80 ring-1 ring-blue-400' : ''}`}
+                        >
+                            <span className="text-gray-500 select-none w-10 inline-block text-right pr-4">{index + 1}</span>
+                            <span>{content}</span>
+                        </div>
                     ))}
                 </div>
             </div>
-          )}
-          { lastSearchCompleted && processedLines.length === 0 &&
-             <div className="text-center text-gray-500 dark:text-gray-400 pt-4">
-                 <p>处理完成，在所选文件中未找到包含关键字 "{keyword}" 的行。</p>
-             </div>
-          }
-          
-          <footer className="text-center text-xs text-gray-500 dark:text-gray-400 pt-4 border-t border-gray-200 dark:border-gray-700">
-             <p>作者:un1 powered by Gemini Build</p>
-             <p className="mt-1">本站完全开源，不会浏览或分发您的任何数据，请放心使用。</p>
-          </footer>
+        )}
+
         </div>
       </div>
-      
-      {/* Export Preview Modal */}
-      {showExportModal && exportConfig && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
-                <header className="flex justify-between items-center p-4 border-b dark:border-gray-600">
-                    <h2 id="export-modal-title" className="text-xl font-semibold text-gray-900 dark:text-white">导出选项与预览</h2>
-                    <button onClick={() => setShowExportModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" aria-label="关闭">
-                       <CloseIcon className="w-6 h-6" />
-                    </button>
-                </header>
-                <main className="p-6 flex-grow overflow-y-auto space-y-6">
-                    {/* Export Controls */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-2">
-                             <label className="font-medium text-gray-700 dark:text-gray-300">导出格式</label>
-                             <div className="flex gap-4">
-                                <button onClick={() => setExportConfig(c => c ? {...c, format: 'md'} : null)} className={`px-4 py-2 rounded-md transition-colors text-sm ${exportConfig.format === 'md' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500'}`}>Markdown</button>
-                                <button onClick={() => setExportConfig(c => c ? {...c, format: 'txt'} : null)} className={`px-4 py-2 rounded-md transition-colors text-sm ${exportConfig.format === 'txt' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500'}`}>TXT</button>
-                             </div>
-                        </div>
-                        {isAdvancedMode && Object.keys(exportConfig.elements).length > 0 && (
-                            <div className="space-y-2">
-                                <label className="font-medium text-gray-700 dark:text-gray-300">包含的元素</label>
-                                <div className="flex flex-wrap gap-x-4 gap-y-2">
-                                    {Object.keys(exportConfig.elements).map(key => (
-                                        <div key={key} className="flex items-center">
-                                            <input
-                                                id={`export-el-${key}`}
-                                                type="checkbox"
-                                                checked={exportConfig.elements[key]}
-                                                onChange={(e) => setExportConfig(c => c ? {...c, elements: {...c.elements, [key]: e.target.checked}} : null)}
-                                                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                                            />
-                                            <label htmlFor={`export-el-${key}`} className="ml-2 text-sm text-gray-800 dark:text-gray-200">{key}</label>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                    {isAdvancedMode && (
-                         <div>
-                             <label htmlFor="template-input" className="block mb-2 text-sm font-medium text-gray-900 dark:text-white">导出格式模板</label>
-                             <input
-                                type="text"
-                                id="template-input"
-                                value={exportConfig.template}
-                                onChange={(e) => setExportConfig(c => c ? {...c, template: e.target.value} : null)}
-                                className="block w-full p-2.5 font-mono text-sm bg-gray-50 border border-gray-300 text-gray-900 rounded-lg focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
-                                placeholder="e.g., [{timestamp}] {message}"
-                             />
-                         </div>
-                    )}
-                    
-                    {/* Preview Area */}
-                    <div>
-                        <label className="block mb-2 text-sm font-medium text-gray-900 dark:text-white">预览</label>
-                        <pre className="bg-gray-100 dark:bg-gray-900 p-4 rounded-lg text-sm whitespace-pre-wrap break-all h-64 overflow-y-auto">
-                           {previewContent}
-                        </pre>
-                    </div>
+      <footer className="mt-8 text-center text-sm text-gray-500 dark:text-gray-400">
+        <a
+            href="https://github.com/unicbm/MaiBot-ReplyCollector"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-blue-600 dark:text-blue-400 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-1 py-0.5"
+        >
+            Github项目地址
+        </a>
+        <span className="mx-2 text-gray-400 dark:text-gray-600">|</span>
+        <a
+            href="https://steamcommunity.com/id/unicbm/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-blue-600 dark:text-blue-400 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-1 py-0.5"
+        >
+            un1
+        </a>
+      </footer>
 
-                </main>
-                <footer className="flex justify-end items-center p-4 border-t dark:border-gray-600 space-x-4">
-                    <button onClick={handleCopyToClipboard} className="relative flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600">
-                        {isCopied ? <CheckCircleIcon className="w-5 h-5 mr-2 text-green-500" /> : <ClipboardIcon className="w-5 h-5 mr-2" />}
-                        {isCopied ? '已复制!' : '复制到剪贴板'}
-                    </button>
-                    <button onClick={handleDownloadFile} className="flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:ring-4 focus:ring-blue-300">
-                        <DownloadIcon className="w-5 h-5 mr-2" />
-                        下载文件
-                    </button>
-                </footer>
-            </div>
-        </div>
+      {/* Export Modal */}
+      {showExportModal && exportConfig && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col">
+                  <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center">
+                      <h2 className="text-2xl font-bold">导出预览与选项</h2>
+                      <button onClick={() => setShowExportModal(false)} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600" aria-label="关闭">
+                          <CloseIcon className="w-6 h-6" />
+                      </button>
+                  </div>
+                  
+                  <div className="p-6 flex-grow overflow-y-auto grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* Options Panel */}
+                      <div className="md:col-span-1 space-y-6">
+                          {processedLines[0]?.type === 'parsed' && (
+                              <div>
+                                  <h3 className="font-semibold mb-3">包含的字段</h3>
+                                  <div className="space-y-2">
+                                      {Object.keys(exportConfig.elements).map(key => (
+                                          <div key={key} className="flex items-center">
+                                              <input
+                                                  id={`export-toggle-${key}`}
+                                                  type="checkbox"
+                                                  checked={exportConfig.elements[key]}
+                                                  onChange={(e) => setExportConfig(c => c && { ...c, elements: { ...c.elements, [key]: e.target.checked } })}
+                                                  className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                                              />
+                                              <label htmlFor={`export-toggle-${key}`} className="ml-2 text-sm font-mono">{key}</label>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+                          
+                          {processedLines[0]?.type === 'parsed' && (
+                              <div>
+                                  <label htmlFor="export-template" className="block font-semibold mb-2">导出模板</label>
+                                  <textarea
+                                      id="export-template"
+                                      value={exportConfig.template}
+                                      onChange={(e) => setExportConfig(c => c && { ...c, template: e.target.value })}
+                                      className="w-full font-mono text-sm bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md p-2 focus:ring-blue-500 focus:border-blue-500"
+                                      rows={4}
+                                      placeholder="使用 {fieldName} 作为占位符"
+                                  />
+                              </div>
+                          )}
+
+                          <div>
+                              <h3 className="font-semibold mb-2">导出格式</h3>
+                              <div className="flex items-center space-x-4">
+                                  <div className="flex items-center">
+                                      <input id="format-md" type="radio" value="md" name="format" checked={exportConfig.format === 'md'} onChange={e => setExportConfig(c => c && { ...c, format: e.target.value as 'md' | 'txt' })} className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"/>
+                                      <label htmlFor="format-md" className="ml-2 text-sm font-medium">Markdown (.md)</label>
+                                  </div>
+                                  <div className="flex items-center">
+                                      <input id="format-txt" type="radio" value="txt" name="format" checked={exportConfig.format === 'txt'} onChange={e => setExportConfig(c => c && { ...c, format: e.target.value as 'md' | 'txt' })} className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"/>
+                                      <label htmlFor="format-txt" className="ml-2 text-sm font-medium">Text (.txt)</label>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      {/* Preview Panel */}
+                      <div className="md:col-span-2">
+                           <label htmlFor="export-preview" className="block font-semibold mb-2">预览</label>
+                           <textarea
+                              id="export-preview"
+                              readOnly
+                              value={previewContent}
+                              className="w-full h-full min-h-[300px] font-mono text-xs bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md p-3"
+                           />
+                      </div>
+                  </div>
+
+                  <div className="p-6 border-t dark:border-gray-700 flex justify-end items-center space-x-4">
+                      <button
+                          onClick={handleCopyToClipboard}
+                          className="flex items-center text-white bg-gray-500 hover:bg-gray-600 focus:ring-4 focus:ring-gray-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                      >
+                          {isCopied ? <CheckCircleIcon className="w-5 h-5 mr-2" /> : <ClipboardIcon className="w-5 h-5 mr-2" />}
+                          {isCopied ? '已复制' : '复制到剪贴板'}
+                      </button>
+                      <button
+                          onClick={handleDownloadFile}
+                          className="flex items-center text-white bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5"
+                      >
+                          <DownloadIcon className="w-5 h-5 mr-2" />
+                          下载文件
+                      </button>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );
